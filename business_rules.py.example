@@ -1,0 +1,38 @@
+# -*- coding: utf-8 -*-
+"""
+business_rules.py のテンプレート。
+
+このファイルには、レンズの状態判定・利益率のライン等、
+個人の判断基準(非公開ノウハウ)を入れる。
+
+【使い方】
+1. このファイルを同じフォルダ内に "business_rules.py" という名前でコピーする
+2. 下の値を自分の実際の基準に書き換える
+3. business_rules.py は絶対にGitHubにpushしない（.gitignoreで除外済み）
+"""
+
+# --- 仕入れ・利益率の前提(以下はダミー値。自分の実際の基準に書き換える) ---
+PURCHASE_BUDGET_CEILING_JPY = 0
+EBAY_FEE_RATE = 0.0
+CEILING_PROFIT_RATE = 0.0
+MIN_PROFIT_RATE_GO = 0.0
+SHIPPING_COST_JPY = 0
+
+# --- 状態除外キーワード ---
+EXCLUDE_KEYWORDS_EN = []
+EXCLUDE_KEYWORDS_JP = []
+
+# --- 免責文言の判定用マーカー ---
+DISCLAIMER_MARKERS_JP = []
+
+# --- 付属品・セット品を除外するキーワード ---
+EXCLUDE_BUNDLE_KEYWORDS = []
+
+# --- MINT/Near MINT判定キーワード ---
+CONDITION_KEYWORDS = []
+
+# --- 型番推定時に取り除くノイズ語 ---
+TITLE_NOISE_PATTERNS = []
+
+GENERIC_FILLER_WORDS = set()
+CORE_QUERY_MAX_WORDS = 6

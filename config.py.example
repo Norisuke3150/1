@@ -1,0 +1,16 @@
+# -*- coding: utf-8 -*-
+"""
+config.py のテンプレート。
+
+【使い方】
+1. このファイルを同じフォルダ内に "config.py" という名前でコピーする
+2. 下の "" の中に、自分の実際のキー・トークンを入力する
+3. config.py は絶対にGitHubにpushしない（.gitignoreで除外済み）
+"""
+
+# eBay Developer Program > Application Keys で取得
+EBAY_CLIENT_ID = ""
+EBAY_CLIENT_SECRET = ""
+
+# LINE Developers Console > Messaging API チャネル で取得
+LINE_CHANNEL_ACCESS_TOKEN = ""

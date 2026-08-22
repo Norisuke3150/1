@@ -1,0 +1,17 @@
+# 機密情報・非公開ノウハウが入っているため絶対にpushしない
+config.py
+business_rules.py
+
+# 実行結果・ログ類（個人の仕入れデータなので公開不要）
+kameland_result_v2_*.csv
+kameland_go_list_*.csv
+ebay_market_price_cache.json
+manual_market_prices.json
+weak_models.json
+researched_lens_models_v2_*.txt
+ebay_api_usage_*.txt
+actual_sales_log*.csv
+
+# Python関連
+__pycache__/
+*.pyc
