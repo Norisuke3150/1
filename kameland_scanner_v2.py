@@ -419,7 +419,7 @@ def ebay_get_item_detail(token, budget, item_id):
 
 
 # --- 仕入れ上限(円)からeBay検索価格上限(USD)を逆算 ---
-# 仕入れ上限(円) → 利益率20%乗せ → 送料加算 → eBay手数料15%を加味して逆算 → USD換算
+# 仕入れ上限(円) → 想定利益率を乗せ → 送料加算 → eBay手数料を加味して逆算 → USD換算
 def calc_ebay_price_ceiling_usd(purchase_budget_jpy):
     with_profit = purchase_budget_jpy * (1 + CEILING_PROFIT_RATE)
     with_shipping = with_profit + SHIPPING_COST_JPY
@@ -1189,7 +1189,7 @@ def main():
                 else:
                     record_weak_model_result(weak_models, model_key, success=True)
                     save_weak_models(weak_models)
-                    # 利益率15%以上をクリアした候補は、1種類のレンズから複数件でも
+                    # 利益率が基準以上をクリアした候補は、1種類のレンズから複数件でも
                     # 全てGOリストに入れる(1件に絞らない)
                     any_go = False
                     for candidate in candidates:
@@ -1200,7 +1200,7 @@ def main():
                             net_received = sale_price_jpy - ebay_fee - SHIPPING_COST_JPY
                             print(f"    --- 利益率計算({candidate['source']} ¥{candidate['price']}) ---")
                             print(f"    eBay相場: ${market_price_usd:.2f} × 為替{USD_JPY_RATE} = ¥{sale_price_jpy:,.0f}")
-                            print(f"    eBay手数料15%: -¥{ebay_fee:,.0f} / 送料: -¥{SHIPPING_COST_JPY:,}")
+                            print(f"    eBay手数料{EBAY_FEE_RATE*100:.0f}%: -¥{ebay_fee:,.0f} / 送料: -¥{SHIPPING_COST_JPY:,}")
                             print(f"    手取り: ¥{net_received:,.0f}")
                             print(f"    利益: ¥{net_received - candidate['price']:,.0f} → 利益率: {profit_rate*100:.1f}%")
 
