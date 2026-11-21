@@ -1,0 +1,22 @@
+# 狙うジャンル。weight = ネタ出しの比率（合計はいくつでもOK）
+categories:
+  - id: couple
+    name: 夫婦
+    weight: 3
+    themes: [家事の分担, お金の使い方, 義実家, 記念日, 夫婦の小さなすれ違い]
+  - id: cohabitation
+    name: 同棲
+    weight: 2
+    themes: [生活リズムの違い, 家賃・光熱費の割り勘, 片付け, 結婚のタイミング]
+  - id: parenting
+    name: 子育て
+    weight: 3
+    themes: [保育園, 寝かしつけ, ママ友・パパ友, 子どもの一言, ワンオペ]
+  - id: service
+    name: 接客
+    weight: 2
+    themes: [コンビニ, 飲食店, アパレル, 困ったお客, ちょっといい話]
+  - id: workplace
+    name: 職場
+    weight: 2
+    themes: [上司と部下, 新人, 飲み会, リモートワーク, 有給・残業]
