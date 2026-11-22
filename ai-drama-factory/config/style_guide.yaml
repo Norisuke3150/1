@@ -17,8 +17,16 @@ format:
   cuts: [3, 4]
   duration_sec: [15, 20]
   hook_sec: 2                # 冒頭2秒で誰に刺さるかわかるようにする
-  title_bar: { background: black, text_color: "#FFD400", position: top, lines: 2, max_chars_per_line: 12 }
-  subtitles: { language: ja, position: bottom, max_chars_per_line: 16 }
+  resolution: 1080x1920
+  fps: 30
+  layout:                    # scripts/assemble_drama.py と同じ値
+    title_band: [0, 420]     # 黒帯＋黄色ラベル（#F5D033・黒太字ゴシック）
+    video_band: [420, 1380]  # 映像（アスペクト比維持）
+    subtitle_band: [1380, 1920]
+    safe_bottom_px: 320      # SNSのUIと被るので空ける
+  title_label: { background: "#F5D033", text_color: black, lines: 2, max_chars_per_line: 12 }
+  subtitles: { language: ja, color: white, outline: black, max_chars_per_line: 16 }
+  audio: { voice_lufs: -14, ambient_volume: 0.22 }
 
 emotion_types: [ほっこり, スカッと, 切ない, 夫婦あるある]
 
