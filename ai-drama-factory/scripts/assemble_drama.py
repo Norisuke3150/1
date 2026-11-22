@@ -335,9 +335,9 @@ def read_text(p: Path) -> str:
 
 TITLE_KEYS = ("title", "titles", "title_lines", "hook_title", "hook", "label",
               "yellow_label", "meta_title", "タイトル", "フックタイトル", "黄色ラベル")
-SUB_KEYS = ("subtitles", "subtitle", "captions", "caption", "lines", "dialogue",
+SUB_KEYS = ("subtitles", "subtitle", "lines", "dialogue",
             "dialogues", "serifs", "字幕", "セリフ")
-TEXT_KEYS = ("text", "line", "subtitle", "caption", "serif", "dialogue", "セリフ", "字幕", "テキスト")
+TEXT_KEYS = ("text", "line", "subtitle", "serif", "dialogue", "セリフ", "字幕", "テキスト")
 CUT_KEYS = ("cut", "cut_no", "cut_number", "cut_id", "scene", "カット")
 CUTS_KEYS = ("cuts", "scenes", "shots", "カット")
 
@@ -408,12 +408,17 @@ def parse_meta_json(d: object) -> tuple[list[str], list[Line], set[int], float |
     if not isinstance(d, dict):
         return [], [], set(), None
     title = _title_lines(_first(d, TITLE_KEYS))
+    if not title:  # {"hook_title_line1": "...", "hook_title_line2": "..."} 形式
+        numbered = sorted((int(m.group(1)), str(v)) for k, v in d.items()
+                          if (m := re.fullmatch(r"(?:hook_)?title_?line_?(\d+)", str(k), re.I)) and v)
+        title = [v for _, v in numbered]
     lines: list[Line] = []
-    subs = _first(d, SUB_KEYS)
-    if subs is not None:
-        lines = _sub_items(subs, None)
-    if not lines:
-        cuts = _first(d, CUTS_KEYS)
+    cuts = _first(d, CUTS_KEYS)                         # カット別の字幕を優先
+    if cuts is None:
+        subs = _first(d, SUB_KEYS)
+        if subs is not None:
+            lines = _sub_items(subs, None)
+    else:
         if isinstance(cuts, dict):                      # {"cut1": [...], "cut2": "..."}
             cuts = [{"cut": _cut_no(k), "subtitles": v} for k, v in cuts.items()]
         if isinstance(cuts, list):
