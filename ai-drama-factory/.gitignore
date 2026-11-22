@@ -5,4 +5,6 @@ workspace/*
 !workspace/README.md
 fonts/*
 !fonts/README.md
+!fonts/NotoSansCJKjp-Bold-subset.otf
+!fonts/OFL.txt
 __pycache__/

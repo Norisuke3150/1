@@ -63,8 +63,10 @@
 | `subtitles.txt` | 字幕。1行1セリフ。カットの区切りに `カット1` や `[cut1]` を書く。`妻：` などの話者名と「」は自動で外れる。（ ）だけの行はト書きとして無視 | ✅ |
 | `subtitles.srt` | 時間指定つき字幕（あれば `subtitles.txt` より優先） | 任意 |
 | `drama.json` | `{"title": [...], "subtitles": [...], "mute_ambient_cuts": [2], "ambient_volume": 0.22}` | 任意 |
+| `meta_titles.json` | タイトルと各カットの字幕（`drama.json` と同じ扱い。下の書き方に対応） | 任意 |
 | 原画・Flow指示・音声台本 | 記録用（結合には使わない） | 任意 |
 
+読み込みの優先順: `drama.json` → `meta_titles.json` → `title.txt` / `subtitles.srt` / `subtitles.txt` → 見出しつきテキスト。
 `title.txt` と `subtitles.txt` が無い場合は、`【タイトル】` `【字幕】` の見出しがついたテキストファイルからも読み取る。
 
 `subtitles.txt` の例:
@@ -76,6 +78,21 @@
 妻：名前書いてたのに…
 （夫、目をそらす）
 ```
+
+`meta_titles.json` で読める書き方（どれでもよい）:
+```json
+{"title": ["共働きの妻へ", "夫のこの一言"],
+ "subtitles": [{"cut": 1, "text": "妻：ごめん、今日作れなかった"}, {"cut": 2, "text": "謝るとこじゃないよ"}]}
+
+{"hook_title": "共働きの妻へ\n夫のこの一言",
+ "cuts": [{"cut": 1, "subtitles": ["妻：ごめん", "夫：いいよ"]},
+          {"cut": 2, "dialogue": [{"speaker": "夫", "line": "謝るとこじゃないよ"}]}]}
+
+{"title": {"line1": "共働きの妻へ", "line2": "夫のこの一言"},
+ "cuts": {"cut1": ["ごめん"], "cut2": "謝るとこじゃないよ"}}
+```
+- タイトルのキー: `title` / `titles` / `hook_title` / `title_lines` / `label` / `タイトル` など。文字列なら改行か「／」で2行に分ける。候補が複数並んでいたら1つ目を使う。
+- 字幕のキー: `subtitles` / `captions` / `lines` / `dialogue` / `字幕` / `セリフ`、カットごとなら `cuts` / `scenes` / `カット`。カット番号がなければ並び順で振る。
 
 ---
 
@@ -98,6 +115,14 @@ python scripts/assemble_drama.py <project_id> --mute-ambient      # 全カット
 python scripts/assemble_drama.py <project_id> --ambient 0.25      # 環境音の音量
 ```
 必要なもの: `ffmpeg` / `ffprobe`、Python 3.10以上、Pillow。
+
+### 文字化け対策
+- **フォント**: `fonts/NotoSansCJKjp-Bold-subset.otf`（Noto Sans CJK JP Bold、JIS第1・第2水準＋記号、SIL OFL）を同梱しているので、Windows / Mac / Linux のどこでも同じ見た目になる。
+  - 優先順: `--font` → `fonts/` に置いた別のフォント → 同梱フォント → OSの太字ゴシック（ヒラギノ / BIZ UDゴシック / 游ゴシック / Noto CJK）→ OSの細字ゴシック（擬似太字）。
+  - 書き出す前に、タイトルと字幕の全文字がそのフォントで描けるかを確かめ、描けない文字（例: 第3水準の漢字）があれば次のフォントに切り替える。絵文字のようにどのフォントにもない文字は、□にせず外して警告する。
+- **テキストの文字コード**: UTF-8 / UTF-8(BOM) / UTF-16(Windowsメモ帳) / Shift_JIS を自動判別。
+- **ZIPのファイル名**: Mac（UTF-8）とWindows（Shift_JIS）で作ったZIPの日本語ファイル名を自動で直す。
+- **コンソール出力**: Windowsのコマンドプロンプトでも絵文字や日本語で止まらないようにしている。
 
 ### スクリプトの仕様（`scripts/assemble_drama.py`）
 - **入力検知**: `inbox/` のZIPを自動解凍し、タイトル・字幕・動画クリップ（番号順）・音声を読み込む。

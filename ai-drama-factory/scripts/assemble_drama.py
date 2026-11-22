@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -58,26 +59,33 @@ VIDEO_EXT = {".mp4", ".mov", ".m4v", ".webm", ".mkv"}
 AUDIO_EXT = {".wav", ".mp3", ".m4a", ".aac", ".flac", ".ogg"}
 TEXT_EXT = {".txt", ".md", ".srt", ".json"}
 
-FONT_CANDIDATES = [
-    # Linux (fonts-noto-cjk)
-    "/usr/share/fonts/opentype/noto/NotoSansCJK-Black.ttc",
-    "/usr/share/fonts/opentype/noto/NotoSansCJK-Bold.ttc",
-    "/usr/share/fonts/noto-cjk/NotoSansCJK-Bold.ttc",
+BUNDLED_FONT = ROOT / "fonts" / "NotoSansCJKjp-Bold-subset.otf"   # 同梱（JIS第1・第2水準＋記号）
+_LOCALAPPDATA = os.environ.get("LOCALAPPDATA", "")
+FONT_CANDIDATES = [  # 太字（同梱フォントで描けない文字があったときに探す）
     # macOS
     "/System/Library/Fonts/ヒラギノ角ゴシック W8.ttc",
     "/System/Library/Fonts/ヒラギノ角ゴシック W7.ttc",
     "/System/Library/Fonts/ヒラギノ角ゴシック W6.ttc",
-    "/System/Library/Fonts/Hiragino Sans GB.ttc",
     # Windows
     "C:/Windows/Fonts/BIZ-UDGothicB.ttc",
     "C:/Windows/Fonts/YuGothB.ttc",
     "C:/Windows/Fonts/meiryob.ttc",
+    f"{_LOCALAPPDATA}/Microsoft/Windows/Fonts/NotoSansJP-Bold.ttf",
+    # Linux（Debian/Ubuntu・Fedora・Arch）
+    "/usr/share/fonts/opentype/noto/NotoSansCJK-Black.ttc",
+    "/usr/share/fonts/opentype/noto/NotoSansCJK-Bold.ttc",
+    "/usr/share/fonts/google-noto-cjk/NotoSansCJK-Bold.ttc",
+    "/usr/share/fonts/noto-cjk/NotoSansCJK-Bold.ttc",
+    "/usr/share/fonts/opentype/ipaexfont-gothic/ipaexg.ttf",
 ]
-FALLBACK_FONTS = [  # 太字が見つからないときの細字（擬似太字で描く）
-    "/usr/share/fonts/opentype/ipafont-gothic/ipag.ttf",
-    "/usr/share/fonts/truetype/fonts-japanese-gothic.ttf",
+FALLBACK_FONTS = [  # 細字しかないとき（擬似太字で描く）
+    "C:/Windows/Fonts/YuGothM.ttc",
     "C:/Windows/Fonts/meiryo.ttc",
     "C:/Windows/Fonts/msgothic.ttc",
+    "/usr/share/fonts/opentype/ipafont-gothic/ipag.ttf",
+    "/usr/share/fonts/truetype/fonts-japanese-gothic.ttf",
+    "/usr/share/fonts/truetype/takao-gothic/TakaoPGothic.ttf",
+    "/usr/share/fonts/truetype/vlgothic/VL-PGothic-Regular.ttf",
 ]
 
 
@@ -173,11 +181,17 @@ def safe_extract(zf: zipfile.ZipFile, dest: Path) -> None:
     dest = dest.resolve()
     for member in zf.infolist():
         name = member.filename
-        try:  # macOSで作ったZIPの日本語ファイル名を救う
-            if not member.flag_bits & 0x800:
-                name = name.encode("cp437").decode("utf-8")
-        except (UnicodeEncodeError, UnicodeDecodeError):
-            pass
+        if not member.flag_bits & 0x800:  # UTF-8フラグなし: Mac(UTF-8)かWindows(Shift_JIS)で作られたZIP
+            try:
+                raw = name.encode("cp437")
+                for enc in ("utf-8", "cp932"):
+                    try:
+                        name = raw.decode(enc)
+                        break
+                    except UnicodeDecodeError:
+                        pass
+            except UnicodeEncodeError:
+                pass
         target = (dest / name).resolve()
         if dest not in target.parents and target != dest:
             raise AssembleError(f"ZIP内に不正なパスがあります: {member.filename}")
@@ -295,6 +309,117 @@ def split_sections(text: str) -> tuple[list[str], str | None]:
     return title, ("\n".join(subs) if subs else None)
 
 
+def read_text(p: Path) -> str:
+    """UTF-8 / UTF-8(BOM) / UTF-16(BOM, Windowsメモ帳) / Shift_JIS(cp932) を自動判別して読む"""
+    raw = p.read_bytes()
+    if raw.startswith((b"\xff\xfe", b"\xfe\xff")):
+        return raw.decode("utf-16")
+    for enc in ("utf-8-sig", "cp932"):
+        try:
+            return raw.decode(enc)
+        except UnicodeDecodeError:
+            pass
+    warn(f"文字コードを判別できないため、読めない文字を飛ばしました: {p.name}")
+    return raw.decode("utf-8", errors="replace")
+
+
+TITLE_KEYS = ("title", "titles", "title_lines", "hook_title", "hook", "label",
+              "yellow_label", "meta_title", "タイトル", "フックタイトル", "黄色ラベル")
+SUB_KEYS = ("subtitles", "subtitle", "captions", "caption", "lines", "dialogue",
+            "dialogues", "serifs", "字幕", "セリフ")
+TEXT_KEYS = ("text", "line", "subtitle", "caption", "serif", "dialogue", "セリフ", "字幕", "テキスト")
+CUT_KEYS = ("cut", "cut_no", "cut_number", "cut_id", "scene", "カット")
+CUTS_KEYS = ("cuts", "scenes", "shots", "カット")
+
+
+def _first(d: dict, keys: tuple) -> object:
+    for k in keys:
+        if k in d and d[k] not in (None, "", []):
+            return d[k]
+    lower = {str(k).lower(): v for k, v in d.items()}
+    for k in keys:
+        if k in lower and lower[k] not in (None, "", []):
+            return lower[k]
+    return None
+
+
+def _cut_no(v: object) -> int | None:
+    m = re.search(r"\d+", str(v)) if v is not None else None
+    return int(m.group()) if m else None
+
+
+def _title_lines(v: object) -> list[str]:
+    if isinstance(v, str):
+        rows = [s for s in re.split(r"\n|\\n", v) if s.strip()]
+        if len(rows) == 1 and re.search(r"／| / ", v):   # 「1行目／2行目」形式
+            rows = [s for s in re.split(r"／| / ", v) if s.strip()]
+        return rows
+    if isinstance(v, list):
+        if v and all(isinstance(x, str) for x in v):
+            return v
+        if v and isinstance(v[0], (dict, list)):      # 候補が複数ある場合は1つ目
+            return _title_lines(v[0])
+    if isinstance(v, dict):
+        lines = [v[k] for k in sorted(v) if re.fullmatch(r"(line|行)_?\d+", str(k), re.I)]
+        if lines:
+            return lines
+        inner = _first(v, ("lines", "text", "main", "selected", "final") + TITLE_KEYS)
+        return _title_lines(inner) if inner is not None else []
+    return []
+
+
+def _sub_items(v: object, cut: int | None) -> list[Line]:
+    out: list[Line] = []
+    if isinstance(v, str):
+        out += [Line(clean_text(s), cut) for s in v.splitlines() if clean_text(s)]
+    elif isinstance(v, list):
+        for x in v:
+            out += _sub_items(x, cut)
+    elif isinstance(v, dict):
+        c = _cut_no(_first(v, CUT_KEYS)) or cut
+        text = _first(v, TEXT_KEYS)
+        if isinstance(text, (list, dict)):
+            return _sub_items(text, c)
+        if text:
+            t = clean_text(str(text))
+            if t:
+                out.append(Line(t, c, v.get("start"), v.get("end")))
+    return out
+
+
+def parse_meta_json(d: object) -> tuple[list[str], list[Line], set[int], float | None]:
+    """drama.json / meta_titles.json を読む。いろいろな書き方を受け付ける:
+       {"title": ["1行目","2行目"], "subtitles": [{"cut":1,"text":"..."}]}
+       {"hook_title": "1行目\\n2行目", "cuts": [{"cut":1,"subtitles":["...","..."]}]}
+       {"title": {"line1":"...","line2":"..."}, "cuts": {"cut1": ["..."], "cut2": "..."}}
+    """
+    if isinstance(d, list):
+        d = {"cuts": d}
+    if not isinstance(d, dict):
+        return [], [], set(), None
+    title = _title_lines(_first(d, TITLE_KEYS))
+    lines: list[Line] = []
+    subs = _first(d, SUB_KEYS)
+    if subs is not None:
+        lines = _sub_items(subs, None)
+    if not lines:
+        cuts = _first(d, CUTS_KEYS)
+        if isinstance(cuts, dict):                      # {"cut1": [...], "cut2": "..."}
+            cuts = [{"cut": _cut_no(k), "subtitles": v} for k, v in cuts.items()]
+        if isinstance(cuts, list):
+            for i, c in enumerate(cuts, 1):
+                if isinstance(c, dict):
+                    no = _cut_no(_first(c, CUT_KEYS)) or i
+                    body = _first(c, SUB_KEYS + TEXT_KEYS)
+                    lines += _sub_items(body, no) if body is not None else []
+                else:
+                    lines += _sub_items(c, i)
+    mute = {int(x) for x in d.get("mute_ambient_cuts", []) if str(x).isdigit()}
+    amb = d.get("ambient_volume")
+    return [str(t).strip() for t in title if str(t).strip()], lines, mute, \
+        float(amb) if amb is not None else None
+
+
 def load_inputs(files: list[Path]) -> Inputs:
     videos = sorted([p for p in files if p.suffix.lower() in VIDEO_EXT], key=natural_key)
     named = [p for p in videos if re.match(r"clip[_\-\s]?\d+", p.stem, re.I)]
@@ -319,36 +444,27 @@ def load_inputs(files: list[Path]) -> Inputs:
     amb = None
     texts = [p for p in files if p.suffix.lower() in TEXT_EXT]
 
-    for p in texts:  # 1) drama.json / manifest.json
-        if p.suffix.lower() == ".json":
-            try:
-                d = json.loads(p.read_text(encoding="utf-8-sig"))
-            except (json.JSONDecodeError, UnicodeDecodeError):
-                continue
-            if not isinstance(d, dict):
-                continue
-            t = d.get("title")
-            if t and not title:
-                title = t if isinstance(t, list) else str(t).splitlines()
-            subs = d.get("subtitles")
-            if subs and not lines:
-                for s in subs:
-                    if isinstance(s, str):
-                        lines.append(Line(clean_text(s)))
-                    else:
-                        lines.append(Line(clean_text(s.get("text", "")), s.get("cut"),
-                                          s.get("start"), s.get("end")))
-            mute |= set(d.get("mute_ambient_cuts", []))
-            amb = d.get("ambient_volume", amb)
+    # 1) drama.json → meta_titles.json → そのほかのJSON の順に読む
+    def json_rank(p: Path) -> int:
+        s = p.stem.lower()
+        return 0 if s == "drama" else 1 if s == "meta_titles" else 2
+    for p in sorted((t for t in texts if t.suffix.lower() == ".json"), key=json_rank):
+        try:
+            d = json.loads(read_text(p))
+        except json.JSONDecodeError:
+            warn(f"JSONとして読めません: {p.name}")
+            continue
+        t, ls, m, a = parse_meta_json(d)
+        if t and not title:
+            title = t
+            log(f"   タイトルを {p.name} から読み込み")
+        if ls and not lines:
+            lines = ls
+            log(f"   字幕を {p.name} から読み込み")
+        mute |= m
+        amb = a if amb is None else amb
 
-    def read(p: Path) -> str:
-        for enc in ("utf-8-sig", "cp932"):
-            try:
-                return p.read_text(encoding=enc)
-            except UnicodeDecodeError:
-                pass
-        return p.read_text(encoding="utf-8", errors="ignore")
-
+    read = read_text
     if not title:  # 2) title.txt
         for p in texts:
             if re.search(r"title|タイトル", p.stem, re.I) and p.suffix.lower() in {".txt", ".md"}:
@@ -490,26 +606,55 @@ def plan_timeline(inp: Inputs, narration: Path, per_cut_bounds: list[float]) -> 
 
 
 # ---- 文字の描画 ----------------------------------------------------------------
-def find_font(explicit: str | None) -> tuple[str, int, bool]:
-    """(フォントパス, ttc番号, 本物の太字か)"""
-    cands = [explicit] if explicit else []
-    cands += sorted(str(p) for p in (ROOT / "fonts").glob("*") if p.suffix.lower() in {".ttf", ".otf", ".ttc"})
-    for c in cands + FONT_CANDIDATES:
-        if c and Path(c).exists():
-            return c, jp_index(c), True
+def missing_glyphs(path: str, idx: int, text: str) -> str:
+    """フォントに含まれていない文字を返す（□や豆腐になる文字）"""
+    f = ImageFont.truetype(path, 40, index=idx)
+    notdef = f.getmask("\U0010FFFD")
+    ref = (notdef.size, bytes(notdef))
+    out = []
+    for ch in sorted(set(text)):
+        if ch.isspace() or ord(ch) < 0x21:
+            continue
+        m = f.getmask(ch)
+        if (m.size, bytes(m)) == ref:
+            out.append(ch)
+    return "".join(out)
+
+
+def find_font(explicit: str | None, text: str) -> tuple[str, int, bool]:
+    """タイトル・字幕の全文字を描けるフォントを探す。(パス, ttc番号, 本物の太字か)
+    優先順: --font → fonts/ に置いたフォント → 同梱フォント → OSの太字ゴシック → OSの細字ゴシック"""
+    user = sorted(str(p) for p in (ROOT / "fonts").glob("*")
+                  if p.suffix.lower() in {".ttf", ".otf", ".ttc"} and p != BUNDLED_FONT)
+    bold = ([explicit] if explicit else []) + user + [str(BUNDLED_FONT)] + FONT_CANDIDATES
     try:
         res = subprocess.run(["fc-match", "-f", "%{file}", "Noto Sans CJK JP:style=Bold"],
                              capture_output=True, text=True)
-        f = res.stdout.strip()
-        if f and Path(f).exists() and re.search(r"bold|black|heavy|w[6-9]", f, re.I):
-            return f, jp_index(f), True
+        if re.search(r"bold|black|heavy|w[6-9]", res.stdout, re.I):
+            bold.append(res.stdout.strip())
     except FileNotFoundError:
         pass
-    for c in FALLBACK_FONTS:
-        if Path(c).exists():
-            warn(f"太字の日本語フォントが見つからないため、擬似太字で描きます: {c}")
-            return c, 0, False
-    raise AssembleError("日本語フォントが見つかりません。fonts/ フォルダに太字ゴシック（例: NotoSansJP-Bold.ttf）を入れてください")
+    seen, best = set(), None
+    for path, real_bold in [(c, True) for c in bold] + [(c, False) for c in FALLBACK_FONTS]:
+        if not path or path in seen or not Path(path).is_file():
+            continue
+        seen.add(path)
+        try:
+            idx = jp_index(path)
+            miss = missing_glyphs(path, idx, text)
+        except OSError:
+            continue
+        if not miss:
+            if not real_bold:
+                warn(f"太字の日本語フォントが見つからないため、擬似太字で描きます: {path}")
+            return path, idx, real_bold
+        if best is None or len(miss) < len(best[3]):
+            best = (path, idx, real_bold, miss)
+        warn(f"{Path(path).name} では描けない文字があります: {miss} → 次のフォントを探します")
+    if best:
+        warn(f"どのフォントでも描けない文字があります: {best[3]}")
+        return best[0], best[1], best[2]
+    raise AssembleError("日本語フォントが見つかりません。fonts/ に太字ゴシック（例: NotoSansJP-Bold.ttf）を置いてください")
 
 
 def jp_index(path: str) -> int:
@@ -520,7 +665,7 @@ def jp_index(path: str) -> int:
             name = " ".join(ImageFont.truetype(path, 20, index=i).getname())
         except OSError:
             break
-        if "JP" in name or "Japan" in name or "ゴシック" in name:
+        if re.search(r"JP|Japan|ゴシック|Gothic|Hiragino|Meiryo|メイリオ|Yu ", name):
             return i
     return 0
 
@@ -721,7 +866,8 @@ def assemble(project_id: str, ambient: float | None, mute_all: bool,
         log(f"   カット{i}: {info['source_sec']:.2f}秒 → {info['target_sec']:.2f}秒（{info['speed']}倍）")
 
     lst = work / "concat.txt"
-    lst.write_text("".join(f"file '{p.as_posix()}'\n" for p in seg_files), encoding="utf-8")
+    esc = lambda p: p.resolve().as_posix().replace("'", "'\\''")
+    lst.write_text("".join(f"file '{esc(p)}'\n" for p in seg_files), encoding="utf-8")
     concat = work / "concat.mkv"
     run(["ffmpeg", "-y", "-hide_banner", "-loglevel", "error", "-f", "concat", "-safe", "0",
          "-i", str(lst), "-c", "copy", str(concat)])
@@ -731,7 +877,15 @@ def assemble(project_id: str, ambient: float | None, mute_all: bool,
     loud = normalize_narration(narr_raw, total, narr)
 
     log("🔤 タイトルと字幕を描いています")
-    font = find_font(font_path)
+    font = find_font(font_path, "".join(inp.title) + "".join(l.text for l in inp.lines))
+    bad = missing_glyphs(font[0], font[1], "".join(inp.title) + "".join(l.text for l in inp.lines))
+    if bad:  # 絵文字など、どのフォントにもない文字は□にせず外す
+        warn(f"描けない文字を外しました: {bad}")
+        strip = lambda t: "".join(ch for ch in t if ch not in bad).strip()
+        inp.title = [strip(t) for t in inp.title]
+        for l in inp.lines:
+            l.text = strip(l.text)
+        inp.lines = [l for l in inp.lines if l.text]
     title_png = work / "title.png"
     render_title(inp.title, font, title_png)
     subs = []
@@ -793,6 +947,11 @@ def print_report(r: dict) -> None:
 
 
 def main() -> int:
+    for stream in (sys.stdout, sys.stderr):      # Windowsのコンソール(cp932)でも絵文字・日本語で落ちないように
+        try:
+            stream.reconfigure(encoding="utf-8", errors="replace")
+        except (AttributeError, ValueError):
+            pass
     ap = argparse.ArgumentParser(description="ショートドラマ自動結合（工程5）")
     ap.add_argument("project_id", help="workspace/<project_id>/inbox を読み込む")
     ap.add_argument("--ambient", type=float, help=f"環境音の音量（既定 {AMBIENT_DEFAULT}、推奨 0.20〜0.25）")
