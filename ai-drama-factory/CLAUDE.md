@@ -26,6 +26,13 @@
 4. **結合時の禁止事項**:
    - カットのつなぎに `xfade` は使わない（コマ落ち防止）。必ず `concat demuxer` でつなぐ。
    - 素材（動画・音声・ZIP）や完成MP4はgitにコミットしない。
+5. **省メモリ運用（結合時）**:
+   - 「結合して」「一括結合して」と言われたら、考え込んだりファイルを読んだりせず、すぐに次を実行して出力された行だけを報告する。
+     - 案件名の指定なし・「一括」→ `python3 scripts/assemble_drama.py --all`
+     - 案件名の指定あり → `python3 scripts/assemble_drama.py <project_id>`
+     - 「元音声なし」「AI声を消して」→ `--mute-ambient` を付ける
+   - 事前の素材確認・`inbox/` の中身の一覧・スクリプトの読み込みはしない（スクリプトが自分で判定する）。
+   - `report.json` を開くのは、警告や `NG` の理由をユーザーに聞かれたときだけ。
 
 ---
 
@@ -108,12 +115,23 @@ output/<project_id>/            ← final_short.mp4・report.json・title_previe
 
 ### 実行
 ```bash
-python scripts/assemble_drama.py <project_id>
-# 動画にAIの声が入っているカットは環境音を消す
-python scripts/assemble_drama.py <project_id> --mute-cuts 2,4
-python scripts/assemble_drama.py <project_id> --mute-ambient      # 全カット消す
-python scripts/assemble_drama.py <project_id> --ambient 0.25      # 環境音の音量
+python3 scripts/assemble_drama.py --all                          # 一括: 素材が揃っていて未完成の案件だけ順に結合
+python3 scripts/assemble_drama.py <project_id>                   # 1案件だけ（完成済みでも作り直す）
+python3 scripts/assemble_drama.py --all --mute-ambient           # Flowの元音声を全カット消す
+python3 scripts/assemble_drama.py <project_id> --mute-cuts 2,4   # 指定カットだけ消す
+python3 scripts/assemble_drama.py <project_id> --ambient 0.25    # 環境音の音量（既定 0.22）
+# --verbose: 途中経過も出す / --keep-work: 作業フォルダを残す（調査用）
 ```
+- `--all` の対象: `workspace/` の各フォルダのうち、`inbox/` に ZIP（または title/meta/drama のテキスト）・動画・音声が揃っていて、`output/<project_id>/final_short.mp4` がまだ無いもの。完成済みは黙ってスキップ、素材不足は `SKIP` と不足物を1行で出す。1件失敗しても残りは続ける。
+- 作業フォルダ `workspace/<project_id>/work/`（解凍したZIP・中間動画・字幕画像）は、成功・失敗にかかわらず終了時に自動で消す。
+- 出力は1案件1行だけ:
+  ```
+  OK    20261122-03_ohitorijime  17.70秒  警告なし  output/20261122-03_ohitorijime/final_short.mp4
+  NG    20261122-05_sleeve  ffmpegが失敗（入力: narration.wav）: Invalid data found ...
+  SKIP  20261122-08_remocon  素材不足: 音声
+  合計  完成1 / スキップ1 / 失敗1
+  ```
+  警告の中身・各カットの速度・LUFSは `output/<project_id>/report.json` に残る。
 必要なもの: `ffmpeg` / `ffprobe`、Python 3.10以上、Pillow。
 
 ### 文字化け対策
@@ -140,6 +158,5 @@ python scripts/assemble_drama.py <project_id> --ambient 0.25      # 環境音の
 - **出力とレポート**: `output/<project_id>/final_short.mp4` と `report.json` を作り、総尺・解像度・音声レベル・各カットの速度を表示する。
 
 ### 結合後にユーザーへ報告すること
-- 総尺（15〜20秒に収まっているか）、解像度・fps・コーデック、完成品のLUFSとピーク
-- 速度が0.5倍未満または2倍を超えたカット（動きが不自然になりやすい）
-- 警告（タイトルが12文字超、字幕が3行以上、クリップ本数が3〜4本以外など）
+- スクリプトが出した `OK` / `NG` / `SKIP` / `合計` の行をそのまま伝える。それ以上は調べない。
+- 警告の中身（総尺が15〜20秒の外、速度が0.5倍未満・2倍超、タイトル12文字超、字幕3行以上など）は、聞かれたら `report.json` の `warnings` を見て答える。

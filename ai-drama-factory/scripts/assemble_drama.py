@@ -2,13 +2,15 @@
 """15〜20秒ショートドラマ自動結合スクリプト（パイプライン工程5）
 
 使い方:
-    python scripts/assemble_drama.py <project_id> [options]
+    python3 scripts/assemble_drama.py <project_id> [options]   # 1案件
+    python3 scripts/assemble_drama.py --all [options]          # 素材が揃った未完成の案件をまとめて
+    出力は1案件1行（OK / NG / SKIP）。途中経過を見たいときは --verbose
 
 入力:  workspace/<project_id>/inbox/
          - GPTのZIP（title.txt / subtitles.txt|srt / drama.json などを含む）
          - Google Flow の動画 clip_01.mp4〜clip_04.mp4
          - Google AI Studio の音声 narration.wav または cut_01.wav〜（カット別）
-出力:  output/<project_id>/final_short.mp4 と report.json
+出力:  output/<project_id>/final_short.mp4 と report.json（作業フォルダ work/ は終了時に自動削除）
 
 処理の流れ:
     1. inbox のZIPを解凍し、タイトル・字幕・動画・音声を読み込む
@@ -93,20 +95,28 @@ class AssembleError(Exception):
     pass
 
 
+VERBOSE = False          # --verbose のときだけ途中経過を出す（通常は1案件1行）
+WARNINGS: list[str] = []  # 案件ごとの警告（report.json に残す）
+
+
 def log(msg: str) -> None:
-    print(msg, flush=True)
+    if VERBOSE:
+        print(msg, flush=True)
 
 
 def warn(msg: str) -> None:
-    print(f"⚠️  {msg}", flush=True)
+    WARNINGS.append(msg)
+    if VERBOSE:
+        print(f"⚠️  {msg}", flush=True)
 
 
 # ---- ffmpeg ヘルパー ----------------------------------------------------------
 def run(cmd: list[str], capture: bool = False) -> subprocess.CompletedProcess:
     res = subprocess.run(cmd, capture_output=True, text=True)
     if res.returncode != 0:
-        tail = "\n".join(res.stderr.strip().splitlines()[-25:])
-        raise AssembleError(f"コマンドが失敗しました: {' '.join(cmd[:6])} ...\n{tail}")
+        lines = res.stderr.strip().splitlines() or ["(エラー出力なし)"]
+        src = next((Path(cmd[i + 1]).name for i, c in enumerate(cmd[:-1]) if c == "-i"), "?")
+        raise AssembleError(f"{cmd[0]}が失敗（入力: {src}）: {lines[-1][:160]}\n" + "\n".join(lines[-25:]))
     return res
 
 
@@ -650,7 +660,7 @@ def find_font(explicit: str | None, text: str) -> tuple[str, int, bool]:
             return path, idx, real_bold
         if best is None or len(miss) < len(best[3]):
             best = (path, idx, real_bold, miss)
-        warn(f"{Path(path).name} では描けない文字があります: {miss} → 次のフォントを探します")
+        log(f"   {Path(path).name} では描けない文字があります: {miss} → 次のフォントを探します")
     if best:
         warn(f"どのフォントでも描けない文字があります: {best[3]}")
         return best[0], best[1], best[2]
@@ -820,7 +830,19 @@ def final_render(concat: Path, narration: Path, title_png: Path,
 
 # ---- メイン -------------------------------------------------------------------
 def assemble(project_id: str, ambient: float | None, mute_all: bool,
-             mute_cuts: set[int], font_path: str | None) -> dict:
+             mute_cuts: set[int], font_path: str | None, keep_work: bool = False) -> dict:
+    """1案件を結合する。作業フォルダ work/ は成功・失敗にかかわらず最後に消す"""
+    WARNINGS.clear()
+    work = ROOT / "workspace" / project_id / "work"
+    try:
+        return _assemble(project_id, ambient, mute_all, mute_cuts, font_path)
+    finally:
+        if not keep_work and work.exists():
+            shutil.rmtree(work, ignore_errors=True)
+
+
+def _assemble(project_id: str, ambient: float | None, mute_all: bool,
+              mute_cuts: set[int], font_path: str | None) -> dict:
     proj = ROOT / "workspace" / project_id
     inbox = proj / "inbox"
     if not inbox.is_dir():
@@ -899,6 +921,7 @@ def assemble(project_id: str, ambient: float | None, mute_all: bool,
     final_render(concat, narr, title_png, subs, vol, final)
 
     report = build_report(final, project_id, inp, cuts, loud, vol, font[0])
+    report["warnings"] = WARNINGS[:]
     (out_dir / "report.json").write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
     shutil.copy(title_png, out_dir / "title_preview.png")
     return report
@@ -936,40 +959,86 @@ def build_report(final: Path, project_id: str, inp: Inputs, cuts: list[dict],
 
 def print_report(r: dict) -> None:
     L = r["loudness"]
-    log("\n✅ 完成: " + r["output"])
-    log(f"   総尺      : {r['duration_sec']:.2f} 秒")
     log(f"   解像度    : {r['resolution']} / {r['fps']}fps / {r['video']}")
-    log(f"   音声      : {r['audio']}")
     log(f"   音声レベル: ナレーション {L['narration_before_lufs']:.1f} → {L['narration_after_lufs']:.1f} LUFS"
         f" / 完成品 {L['final_integrated_lufs']:.1f} LUFS（ピーク {L['final_true_peak_dbtp']:.1f} dBTP）"
         f" / 環境音 {L['ambient_volume']}")
-    log(f"   ファイル  : {r['size_mb']} MB")
+    w = r.get("warnings", [])
+    print(f"OK    {r['project_id']}  {r['duration_sec']:.2f}秒  "
+          f"{'警告なし' if not w else f'警告{len(w)}件(report.json)'}  {r['output']}", flush=True)
+
+
+def inbox_missing(inbox: Path) -> list[str]:
+    """素材が揃っているかを、解凍せずにファイル名だけで調べる"""
+    files = [p for p in inbox.rglob("*") if p.is_file() and not p.name.startswith(".")] if inbox.is_dir() else []
+    ext = lambda xs: [p for p in files if p.suffix.lower() in xs]
+    miss = []
+    if not ext({".zip"}) and not [p for p in ext(TEXT_EXT) if re.search(r"title|meta|drama|タイトル", p.stem, re.I)]:
+        miss.append("ZIP")
+    if not ext(VIDEO_EXT):
+        miss.append("動画")
+    if not ext(AUDIO_EXT):
+        miss.append("音声")
+    return miss
+
+
+def run_one(pid: str, args, mute_cuts: set[int]) -> bool:
+    try:
+        print_report(assemble(pid, args.ambient, args.mute_ambient, mute_cuts, args.font, args.keep_work))
+        return True
+    except AssembleError as e:
+        print(f"NG    {pid}  {str(e).splitlines()[0]}", flush=True)
+        return False
 
 
 def main() -> int:
+    global VERBOSE
     for stream in (sys.stdout, sys.stderr):      # Windowsのコンソール(cp932)でも絵文字・日本語で落ちないように
         try:
             stream.reconfigure(encoding="utf-8", errors="replace")
         except (AttributeError, ValueError):
             pass
     ap = argparse.ArgumentParser(description="ショートドラマ自動結合（工程5）")
-    ap.add_argument("project_id", help="workspace/<project_id>/inbox を読み込む")
+    ap.add_argument("project_id", nargs="?", help="workspace/<project_id>/inbox を読み込む")
+    ap.add_argument("--all", action="store_true",
+                    help="workspace/ の全案件のうち、素材が揃っていて未完成のものだけを順に結合する")
     ap.add_argument("--ambient", type=float, help=f"環境音の音量（既定 {AMBIENT_DEFAULT}、推奨 0.20〜0.25）")
-    ap.add_argument("--mute-ambient", action="store_true", help="全カットの環境音を消す（AI声が入っているとき）")
+    ap.add_argument("--mute-ambient", action="store_true", help="全カットのFlow元音声を消す（AI声が入っているとき）")
     ap.add_argument("--mute-cuts", default="", help="環境音を消すカット番号（例: 2,4）")
     ap.add_argument("--font", help="タイトル・字幕に使うフォントファイル")
+    ap.add_argument("--keep-work", action="store_true", help="作業フォルダ work/ を消さずに残す（調査用）")
+    ap.add_argument("--verbose", "-v", action="store_true", help="途中経過と警告の中身も表示する")
     args = ap.parse_args()
+    VERBOSE = args.verbose
+    if bool(args.project_id) == args.all:
+        ap.error("project_id か --all のどちらか一方を指定してください")
     mute_cuts = {int(x) for x in args.mute_cuts.split(",") if x.strip()}
     for tool in ("ffmpeg", "ffprobe"):
         if not shutil.which(tool):
-            print(f"❌ {tool} が見つかりません。インストールしてください", file=sys.stderr)
+            print(f"NG    {tool} が見つかりません。インストールしてください", flush=True)
             return 1
-    try:
-        print_report(assemble(args.project_id, args.ambient, args.mute_ambient, mute_cuts, args.font))
-    except AssembleError as e:
-        print(f"❌ {e}", file=sys.stderr)
-        return 1
-    return 0
+
+    if not args.all:
+        return 0 if run_one(args.project_id, args, mute_cuts) else 1
+
+    ws = ROOT / "workspace"
+    done = skipped = failed = 0
+    for proj in sorted((p for p in ws.iterdir() if p.is_dir() and not p.name.startswith(".")),
+                       key=natural_key) if ws.is_dir() else []:
+        if (ROOT / "output" / proj.name / "final_short.mp4").exists():
+            skipped += 1                          # 完成済みは黙ってスキップ
+            continue
+        miss = inbox_missing(proj / "inbox")
+        if miss:
+            print(f"SKIP  {proj.name}  素材不足: {'・'.join(miss)}", flush=True)
+            skipped += 1
+            continue
+        if run_one(proj.name, args, mute_cuts):
+            done += 1
+        else:
+            failed += 1
+    print(f"合計  完成{done} / スキップ{skipped} / 失敗{failed}", flush=True)
+    return 1 if failed else 0
 
 
 if __name__ == "__main__":
