@@ -1,0 +1,39 @@
+# CLAUDE.md の「15〜20秒・2人劇・3〜4カット縛り」に合わせた設定
+characters:
+  count: 2                   # 原則2人
+  max_count: 3               # 多くても3人
+  age_range: [20, 45]
+  children_age_range: [2, 10]
+  nationality: 日本人
+  look: 普通の服装・自然なメイク（モデル風にしすぎない）
+
+setting:
+  country: 日本
+  locations: [リビング, ダイニング, 玄関, 寝室, コールセンター, カフェ, 車内]
+  season_aware: true         # 投稿日の季節に合わせる
+
+format:
+  aspect_ratio: "9:16"
+  cuts: [3, 4]
+  duration_sec: [15, 20]
+  hook_sec: 2                # 冒頭2秒で誰に刺さるかわかるようにする
+  resolution: 1080x1920
+  fps: 30
+  layout:                    # scripts/assemble_drama.py と同じ値
+    title_band: [0, 420]     # 黒帯＋黄色ラベル（#F5D033・黒太字ゴシック）
+    video_band: [420, 1380]  # 映像（アスペクト比維持）
+    subtitle_band: [1380, 1920]
+    safe_bottom_px: 320      # SNSのUIと被るので空ける
+  title_label: { background: "#F5D033", text_color: black, lines: 2, max_chars_per_line: 12 }
+  subtitles: { language: ja, color: white, outline: black, max_chars_per_line: 16 }
+  audio: { voice_lufs: -14, ambient_volume: 0.22 }
+
+emotion_types: [ほっこり, スカッと, 切ない, 夫婦あるある]
+
+prohibited:
+  - 元投稿の文章をそのまま使うこと
+  - 固有名詞・アカウント名・個人を特定できる情報
+  - 激しいアクション・群衆シーン
+  - 上記 locations 以外の場所が必要なネタ
+  - 暴力・性的な表現・差別的な表現
+  - 政治・宗教

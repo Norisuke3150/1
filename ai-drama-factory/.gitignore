@@ -1,0 +1,10 @@
+# 動画・音声・作業ファイルは重いのでコミットしない
+output/**/*.mp4
+workspace/*
+!workspace/.gitkeep
+!workspace/README.md
+fonts/*
+!fonts/README.md
+!fonts/NotoSansCJKjp-Bold-subset.otf
+!fonts/OFL.txt
+__pycache__/
